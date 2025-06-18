@@ -1,0 +1,13 @@
+file(REMOVE_RECURSE
+  "config/sdkconfig.h"
+  "config/sdkconfig.cmake"
+  "bootloader/bootloader.elf"
+  "bootloader/bootloader.bin"
+  "bootloader/bootloader.map"
+  "mpu6500.bin"
+  "flash_project_args"
+  "mpu6500.map"
+  "project_elf_src_esp32.c"
+  "ldgen_libraries.in"
+  "ldgen_libraries"
+)

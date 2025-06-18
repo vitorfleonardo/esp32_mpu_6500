@@ -1,0 +1,2 @@
+source /home/feijo/Documents/mpu6500/build/gdbinit/symbols
+source /home/feijo/Documents/mpu6500/build/gdbinit/connect
