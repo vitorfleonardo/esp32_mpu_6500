@@ -1,29 +1,45 @@
-#include <stdio.h>                  // Para printf, fprintf, FILE*, etc.
-#include "driver/i2c.h"             // I2C functions: write_to_device, read_from_device e i2c_config_t
-#include "freertos/FreeRTOS.h"      // Necessário para pdMS_TO_TICKS()
-#include "freertos/task.h"          // FreeRTOS functions: vTaskDelay, xTaskCreate
-#include "esp_log.h"                // Para ESP_LOGI, ESP_LOGE
-#include "esp_err.h"                // Para tipos esp_err_t e esp_err_to_name
-#include "freertos/semphr.h"        // Usar semáforo de exclusão mútua
-#include "esp_vfs_fat.h"            // Para esp_vfs_fat_sdmmc_mount e config FAT
-#include "driver/sdmmc_host.h"      // Para SDMMC_HOST_DEFAULT()
-#include "driver/sdmmc_defs.h"      // Definições auxiliares do SDMMC
-#include "sdmmc_cmd.h"              // Para tipo sdmmc_card_t e funções do SD
+// ==== INCLUDES E SUAS FINALIDADES ====
+#include <stdio.h>                  // Manipulação de arquivos (fopen, fwrite, fclose, FILE*)
+#include <string.h>                 // Funções como snprintf para strings formatadas)              
+#include "esp_log.h"                // Logging com ESP_LOGI, ESP_LOGE
+#include "esp_err.h"                // Tipos e strings de erro (esp_err_to_name)
+#include "esp_timer.h"              // Timestamp com precisão de microssegundos
 
-#include "sdkconfig.h"
-#include <string.h>
-#include <stdlib.h>
-#include "driver/gpio.h"
-#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"      // Conversão de tempo (pdMS_TO_TICKS), delays
+#include "freertos/task.h"          // Criação e gerenciamento de tarefas (xTaskCreate, vTaskDelay)
+#include "freertos/semphr.h"        // Semáforo mutex para controle de buffer compartilhado
 
-// ==== CONFIGURAÇÕES ====
+#include "driver/i2c_master.h"      // Comunicação I2C com o MPU-6500
+#include "driver/i2c.h"             // Tipos e funções do driver I2C (inclui i2c_config_t)
+#include "driver/gpio.h"            // Configuração e interrupções de GPIO (botão)
+#include "driver/spi_common.h"      // Inicialização do barramento SPI (pinos MOSI, MISO, CLK)
+#include "driver/sdspi_host.h"      // Comunicação com SD Card via SPI (host, config)
+
+#include "esp_vfs_fat.h"            // Montagem do sistema de arquivos FAT para o SD card
+#include "driver/sdmmc_host.h"      // Host SPI/SDMMC (SDSPI_HOST_DEFAULT)
+#include "driver/sdmmc_defs.h"      // Definições auxiliares (allocation_unit_size)
+#include "sdmmc_cmd.h"              // Tipo sdmmc_card_t e comandos de SD
+
+#include "sdkconfig.h"               // Define configurações do projeto (CONFIG_*)                                
+
+// ==== CONFIGURAÇÕES I2C (MPU-6500) ====
 #define I2C_MASTER_NUM         I2C_NUM_0    // Uso do I2C0 da ESP32
-#define I2C_SDA_IO             14           // GPIO 14 da ESP32 -> SDA do MPU-6500 (fio de dados)
-#define I2C_SCL_IO             15           // GPIO 15 da ESP32 -> SCL do MPU-6500 (fio de clock)
+#define I2C_SDA_IO             21           // GPIO 21 da ESP32 -> SDA do MPU-6500 (fio de dados)
+#define I2C_SCL_IO             22           // GPIO 22 da ESP32 -> SCL do MPU-6500 (fio de clock)
 #define I2C_FREQ_HZ            200000       // Frequência de comunicaçao do barramento I2C (200 kHz)
 #define MPU_ADDR               0x68         // pino ADO (address select) do MPU-6500 conectado no GND
-#define BUTTON_GPIO            13           // GPIO 13 da ESP32 -> Botão fisico (ativa & desativa coleta de dados)
+
+// ==== CONFIGURAÇÕES DO SPI (MicroSD) ====
+#define PIN_NUM_MOSI           23
+#define PIN_NUM_MISO           19
+#define PIN_NUM_CLK            18
+#define PIN_NUM_CS             2
+
+// ==== CONFIGURAÇÕES BOTÃO ====
+#define BUTTON_GPIO            27           // GPIO 27 da ESP32 -> Botão fisico (ativa & desativa coleta de dados)
 #define DEBOUNCE_TIME_MS       50           // Tempo de debounce do botão (50 ms)
+
+// ==== BUFFER ====
 #define BUFFER_SIZE_BYTES      1024         // Tamanho do buffer de memória RAM interna
 
 // ==== REGISTRADORES MPU-6500 ====
@@ -46,7 +62,7 @@ typedef enum {
 } estado_t;
 
 static estado_t estado_atual = ESTADO_IDLE;
-static const char *TAG = "MPU_FOGUETE";
+static const char *TAG = "HARDWARE_FOGUETE";
 
 // ==== BUFFER PARA DADOS ====
 static uint8_t buffer_dados[BUFFER_SIZE_BYTES];
@@ -240,17 +256,48 @@ void inicializar_sd() {
 
     sdmmc_card_t *card;                         // Ponteiro para o cartão SD
     const char mount_point[] = "/sdcard";       // Ponto de montagem do cartão SD
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();   // configuração padrão de comunicação com o cartão SD via SDMMC
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT(); // configuração padrão do slot de leitura do cartão SD
 
-    // Chamada para montar o cartão SD com os parâmetros definidos
-    esp_err_t ret = esp_vfs_fat_sdmmc_mount(mount_point, &host, &slot_config, &mount_config, &card);
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();   // configuração padrão de comunicação com o cartão SD 
+    host.slot = VSPI_HOST; // define o barramento SPI da ESP32 a ser usado
+    host.max_freq_khz = 10000;
+
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = PIN_NUM_MOSI, // GPIO para Master Out Slave In (MOSI)
+        .miso_io_num = PIN_NUM_MISO, // GPIO para Master In Slave Out (MISO)
+        .sclk_io_num = PIN_NUM_CLK, // GPIO para Clock (SCLK)
+        .quadwp_io_num = -1, // não usado 
+        .quadhd_io_num = -1, // não usado
+        .max_transfer_sz = 4000 // Tamanho máximo de transferência (4 KB)
+    };
+
+    // Configuração do slot SDSPI (SPI para SD Card)
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT(); 
+    slot_config.gpio_cs = PIN_NUM_CS;
+    slot_config.host_id = host.slot;
+
+    // Inicializa o barramento SPI com a configuração definida
+    esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Erro inicializando barramento SPI: %s", esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI(TAG, "Barramento SPI inicializado com sucesso.");
+    
+    // Aguarda 500 ms para garantir que o barramento SPI esteja pronto
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    
+    // Força pull-up no pino CS (às vezes necessário em módulos sem resistor)
+    gpio_set_pull_mode(PIN_NUM_CS, GPIO_PULLUP_ONLY);
+
+    // Montagem do cartão SD usando a configuração a configuração definida
+    ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
 
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Erro montando SD: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "SD montado com sucesso.");
+        return;
     }
+    ESP_LOGI(TAG, "SD montado com sucesso.");
 }
 
 void app_main() {
@@ -260,8 +307,8 @@ void app_main() {
     // Inicializa o I2C (ESP32<->MPU-6500)
     i2c_config_t i2c_conf = {
         .mode = I2C_MODE_MASTER,                // ESP32 como master e MPU-6500 slave
-        .sda_io_num = I2C_SDA_IO,               // GPIO 14 como SDA
-        .scl_io_num = I2C_SCL_IO,               // GPIO 15 como SCL
+        .sda_io_num = I2C_SDA_IO,               // GPIO pro SDA
+        .scl_io_num = I2C_SCL_IO,               // GPIO pro SCL
         .sda_pullup_en = GPIO_PULLUP_ENABLE,    // Habilita pull-up interno no SDA !!!!! Revisar na hora de soldar !!!! exige resistores de pull-up
         .scl_pullup_en = GPIO_PULLUP_ENABLE,    // Habilita pull-up interno no SDA !!!!! Revisar na hora de soldar !!!! exige resistores de pull-up
         .master.clk_speed = I2C_FREQ_HZ,        // Define a frequência de 200 kHz

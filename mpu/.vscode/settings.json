@@ -4,6 +4,7 @@
   "idf.toolsPath": "/Users/vitorfleonardo/.espressif",
   "idf.pythonInstallPath": "/Users/vitorfleonardo/.pyenv/shims/python",
   "files.associations": {
-    "esp_err.h": "c"
+    "esp_err.h": "c",
+    "gpio.h": "c"
   }
 }

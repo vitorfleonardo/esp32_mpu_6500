@@ -1,10 +1,19 @@
-Comandos:
+# 🔌 Como gravar e rodar o firmware na ESP32S
 
-1. source ~/esp/esp-idf/export.sh
-2. idf.py set-target esp32 (so uma vez)
-3. idf.py build
-4. idf.py -p /dev/tty.usbserial-23210 -b 115200 flash monitor
-5. idf.py fullclean (apagar diretorio build e cache)
+## 1. Abra o terminal e execute os comando em sequencia:
+
+```bash
+source ~/esp/esp-idf/export.sh         # Carrega variáveis de ambiente do ESP-IDF
+idf.py set-target esp32                # Define o alvo como ESP32 (necessário apenas a primeira vez)
+idf.py build                           # Compila o projeto
+idf.py -p /dev/tty.usbserial-0001 -b 115200 flash monitor  # Grava na ESP32 e abre o monitor serial
+```
+
+## Limpeza do build (se necessário):
+
+```bash
+idf.py fullclean
+```
 
 # Registradores do MPU
 
@@ -126,3 +135,96 @@ Contêm o número de bytes disponíveis para leitura na FIFO.
 - Usado para ler os dados brutos armazenados na FIFO (ordem FIFO).
 - Cada leitura consome os dados da FIFO.
 - Cada amostra completa tem 12 bytes (6 eixos x 2 bytes).
+
+# uso de bibliotcas
+
+```bash
+#include <stdio.h>
+// ✔️ Usada para FILE*, fopen, fwrite, fclose
+
+#include "driver/i2c.h"
+// ✔️ Usada para comunicação I2C com o MPU-6500:
+//    - i2c_param_config()
+//    - i2c_driver_install()
+//    - i2c_master_write_to_device()
+//    - i2c_master_write_read_device()
+//    - i2c_config_t
+
+#include "freertos/FreeRTOS.h"
+// ✔️ Usada para macros do FreeRTOS como:
+//    - pdMS_TO_TICKS()
+//    - portMAX_DELAY
+
+#include "freertos/task.h"
+// ✔️ Usada para criação e controle de tarefas:
+//    - xTaskCreate()
+//    - vTaskDelay()
+
+#include "esp_log.h"
+// ✔️ Usada para log de mensagens no terminal serial:
+//    - ESP_LOGI()
+//    - ESP_LOGE()
+
+#include "esp_err.h"
+// ✔️ Usada para tipo e mensagens de erro:
+//    - esp_err_t
+//    - esp_err_to_name()
+
+#include "freertos/semphr.h"
+// ✔️ Usada para controle de concorrência com mutex:
+//    - xSemaphoreCreateMutex()
+//    - xSemaphoreTake()
+//    - xSemaphoreGive()
+
+#include "esp_vfs_fat.h"
+// ✔️ Usada para montagem do sistema de arquivos FAT no SD card SPI:
+//    - esp_vfs_fat_sdspi_mount()
+//    - esp_vfs_fat_sdmmc_mount_config_t (e sdspi equivalente)
+
+#include "driver/sdmmc_host.h"
+// ✔️ Usada para host SPI ou SDMMC:
+//    - SDSPI_HOST_DEFAULT()
+//    - sdmmc_host_t
+
+#include "driver/sdmmc_defs.h"
+// ✔️ Usada para constantes e definições auxiliares do SD:
+//    - allocation_unit_size
+
+#include "sdmmc_cmd.h"
+// ✔️ Usada para:
+//    - tipo sdmmc_card_t
+//    - leitura e escrita no SD card (implícito via mount)
+
+#include "sdkconfig.h"
+// ✔️ Usada indiretamente via macros de build (como CONFIG_FREERTOS_HZ)
+//    - Presente como dependência do ESP-IDF (não usada diretamente, mas requerida)
+
+#include <string.h>
+// ✔️ Usada para manipulação de strings:
+//    - snprintf()
+
+#include <stdlib.h>
+// ❌ **Não usada** no código atual
+//    - Pode ser removida a menos que vá usar malloc(), atoi(), etc.
+
+#include "driver/gpio.h"
+// ✔️ Usada para configurar e utilizar GPIO:
+//    - gpio_config()
+//    - gpio_install_isr_service()
+//    - gpio_isr_handler_add()
+//    - gpio_config_t
+
+#include "esp_timer.h"
+// ✔️ Usada para obter timestamp com microssegundos:
+//    - esp_timer_get_time()
+
+#include "driver/spi_common.h"
+// ✔️ Usada para inicializar barramento SPI:
+//    - spi_bus_initialize()
+
+#include "driver/sdspi_host.h"
+// ✔️ Usada para configurar o SD card via SPI:
+//    - sdspi_device_config_t
+//    - SDSPI_DEVICE_CONFIG_DEFAULT()
+
+```
